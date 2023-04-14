@@ -11,6 +11,8 @@ env:
   APP_NAME: tiny-backend
   CHART_PATH: './tiny-backend-chart'
   CHART_OVERRIDE_PATH: './tiny-backend-chart/values.yaml'
+  RESOURCE_GROUP: 6l20rgroup
+  CLUSTER_NAME: 6l20cluster
 
 jobs:
   build:
