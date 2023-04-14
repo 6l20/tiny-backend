@@ -7,8 +7,8 @@ on:
       - '*'
 
 env:
-  REGISTRY: yourdockerhubusername
-  APP_NAME: my-backend-project
+  REGISTRY: 6l20registry.azurecr.io
+  APP_NAME: tiny-backend
 
 jobs:
   build:
@@ -30,14 +30,15 @@ jobs:
     - name: Build Docker image
       run: docker build -t ${{ env.REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }} .
 
-    - name: Login to DockerHub
-      run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+    - name: Login to Azure Container Registry
+      run: echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.REGISTRY }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
       env:
-        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+        ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
 
     - name: Push Docker image
       run: docker push ${{ env.REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
+
 
   deploy:
     needs: build
@@ -58,13 +59,13 @@ jobs:
       if: github.ref != 'refs/heads/main'
       run: |
         az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        az aks get-credentials --resource-group yourResourceGroup --name yourAKSCluster --overwrite-existing
-        helm upgrade --install --wait --namespace development --create-namespace my-backend-dev my-backend-chart --set image.tag=${{ github.sha }}
+        az aks get-credentials --resource-group 6l20rgroup --name 6l20cluster --overwrite-existing
+        helm upgrade --install --wait --namespace development --create-namespace development tiny-backend-chart --set image.tag=${{ github.sha }}
 
     - name: Deploy to Staging
       if: github.ref == 'refs/heads/main'
       run: |
         az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        az aks get-credentials --resource-group yourResourceGroup --name yourAKSCluster --overwrite-existing
-        helm upgrade --install --wait --namespace staging --create-namespace my-backend-staging my-backend-chart --set image.tag=${{ github.sha }}
+        az aks get-credentials --resource-group 6l20rgroup --name 6l20cluster --overwrite-existing
+        helm upgrade --install --wait --namespace staging --create-namespace staging tiny-backend-chart --set image.tag=${{ github.sha }}
 
