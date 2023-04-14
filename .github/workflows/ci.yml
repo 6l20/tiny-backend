@@ -9,13 +9,15 @@ on:
 env:
   REGISTRY: 6l20registry.azurecr.io
   APP_NAME: tiny-backend
+  CHART_PATH: './tiny-backend-chart'
+  CHART_OVERRIDE_PATH: './tiny-backend-chart/values.yaml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Set up Go
       uses: actions/setup-go@v2
@@ -41,31 +43,72 @@ jobs:
 
 
   deploy:
+    permissions:
+        actions: read
+        contents: read
+        id-token: write
     needs: build
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
-    - name: Set up Azure CLI
-      uses: azure/CLI@v1
+    # Logs in with your Azure credentials
+    - name: Azure login
+      uses: azure/login@v1.4.6
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    - name: Deploy to Development
+    # Use kubelogin to configure your kubeconfig for Azure auth
+    - name: Set up kubelogin for non-interactive login
+      uses: azure/use-kubelogin@v1
+      with:
+        kubelogin-version: 'v0.0.25'
+
+    # Retrieves your Azure Kubernetes Service cluster's kubeconfig file
+    - name: Get K8s context
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ env.RESOURCE_GROUP }}
+        cluster-name: ${{ env.CLUSTER_NAME }}
+        admin: 'false'
+        use-kubelogin: 'true'
+
+    # Runs Helm to create manifest files
+    - name: Bake deployment
+      uses: azure/k8s-bake@v2
+      with:
+        renderEngine: "helm"
+        helmChart: ${{ env.CHART_PATH }}
+        overrideFiles: ${{ env.CHART_OVERRIDE_PATH }}
+        overrides: |
+          replicas:2
+        helm-version: "latest"
+      id: bake
+
+    # Deploys application based on manifest files from previous step
+    - name: Deploy application to development
       if: github.ref != 'refs/heads/main'
-      run: |
-        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        az aks get-credentials --resource-group 6l20rgroup --name 6l20cluster --overwrite-existing
-        helm upgrade --install --wait --namespace development --create-namespace development tiny-backend-chart --set image.tag=${{ github.sha }}
-
-    - name: Deploy to Staging
+      uses: Azure/k8s-deploy@v4
+      with:
+        action: deploy
+        namespace: development
+        manifests: ${{ steps.bake.outputs.manifestsBundle }}
+        images: |
+          ${{ env.REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
+    
+    # Deploys application based on manifest files from previous step
+    - name: Deploy application to staging
       if: github.ref == 'refs/heads/main'
-      run: |
-        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        az aks get-credentials --resource-group 6l20rgroup --name 6l20cluster --overwrite-existing
-        helm upgrade --install --wait --namespace staging --create-namespace staging tiny-backend-chart --set image.tag=${{ github.sha }}
+      uses: Azure/k8s-deploy@v4
+      with:
+        action: deploy
+        namespace: staging
+        manifests: ${{ steps.bake.outputs.manifestsBundle }}
+        images: |
+          ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.APP_NAME }}:${{ github.sha }}
 
+    
+  
