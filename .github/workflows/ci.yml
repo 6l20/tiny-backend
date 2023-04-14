@@ -1,0 +1,70 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - '*'
+
+env:
+  REGISTRY: yourdockerhubusername
+  APP_NAME: my-backend-project
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.17
+
+    - name: Build and test
+      run: |
+        go build -o main .
+        go test ./...
+
+    - name: Build Docker image
+      run: docker build -t ${{ env.REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }} .
+
+    - name: Login to DockerHub
+      run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Push Docker image
+      run: docker push ${{ env.REGISTRY }}/${{ env.APP_NAME }}:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Azure CLI
+      uses: azure/setup-azure-cli@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy to Development
+      if: github.ref != 'refs/heads/main'
+      run: |
+        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        az aks get-credentials --resource-group yourResourceGroup --name yourAKSCluster --overwrite-existing
+        helm upgrade --install --wait --namespace development --create-namespace my-backend-dev my-backend-chart --set image.tag=${{ github.sha }}
+
+    - name: Deploy to Staging
+      if: github.ref == 'refs/heads/main'
+      run: |
+        az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        az aks get-credentials --resource-group yourResourceGroup --name yourAKSCluster --overwrite-existing
+        helm upgrade --install --wait --namespace staging --create-namespace my-backend-staging my-backend-chart --set image.tag=${{ github.sha }}
+
